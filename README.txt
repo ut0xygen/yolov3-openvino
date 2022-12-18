@@ -103,10 +103,10 @@ Tutorial
 
 Reference
   GitHub Repositories
-    Darknet Original
+    Darknet
       https://github.com/pjreddie/darknet
 
-    Darknet AlexeyAB
+    Darknet (AlexeyAB)
       https://github.com/AlexeyAB/darknet
 
     For TensorFlow 1.x

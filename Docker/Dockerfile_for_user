@@ -13,11 +13,8 @@ RUN useradd -m -s /bin/bash -u ${UID} -g ${GID} ${UNAME}
 RUN usermod --append --groups sudo ${UNAME}
 RUN echo "${UNAME}:${UPASS}" | chpasswd
 
+#
 WORKDIR /home/${UNAME}
-RUN chown -R ${UNAME}:${GNAME} /root
-# RUN chmod -R ugo+rw /root
-
-USER ${UNAME}
 RUN ln -s /root/[!.]* ./
-
+USER ${UNAME}
 CMD /bin/bash

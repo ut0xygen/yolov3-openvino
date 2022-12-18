@@ -1,21 +1,55 @@
 import os
 import argparse
-from yolo   import  YOLOV3, YOLOV3Tiny
+from models.yolov3  import  (
+    YOLOV3,
+    YOLOV3Tiny,
+)
 from utils  import  load_darknet_weights
 
+import cv2
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
+def visualize(img,
+              pr):
+    BBOXES          =   pr[0]
+    CONFIDENCES     =   pr[1]
+    CLASSES         =   pr[2]
+    NUM_DETECTIONS  =   pr[3]
+
+    imgWH           =   np.flip(img.shape[0:2])
+    for idx in range(NUM_DETECTIONS):
+        x1y1    =   (BBOXES[idx][0:2] * imgWH).astype(np.int32)
+        x2y2    =   (BBOXES[idx][2:4] * imgWH).astype(np.int32)
+        img     =   cv2.rectangle(img, x1y1, x2y2, (255, 0, 0), 2)
+
+    return img
+
 
 def main(weights_file   :str,
-         out_file       :str,
+         classes_file   :str,
          width          :int,
          height         :int,
          channels       :int,
-         num_classes    :int,
+         batch_size     :int,
          tiny           :bool,
-         checkpoint     :bool):
+         out_file       :str,
+         test_list_file :str):
+    ##### Load classes.
+    CLASSES             =   []
+    LEN_STR_CLASS       =   0
+    with open(classes_file, 'r', encoding = 'utf-8') as file:
+        lines           =   file.readlines()
+    for elmLine in lines:
+        elmLine         =   elmLine.strip()
+        if not elmLine:
+            continue
+
+        LEN_STR_CLASS   =   max(LEN_STR_CLASS, len(elmLine))
+        CLASSES.append(elmLine)
+
+    #####
     if not tiny:
         ANCHORS         =   np.array([
             [10, 13 ], [16 , 30 ], [33 , 23 ],
@@ -41,48 +75,110 @@ def main(weights_file   :str,
 
         modelGenerator  =   YOLOV3Tiny
 
-    # Setup GPU.
-    LIST_GPU = tf.config.experimental.list_physical_devices('GPU')
-    if LIST_GPU:
-        tf.config.experimental.set_memory_growth(LIST_GPU[0], True)
-
-    # Generate model.
+    ##### Construct model.
     model           =   modelGenerator(
-        width       =   width,
         height      =   height,
+        width       =   width,
         channels    =   channels,
-        num_classes =   num_classes,
+        batch_size  =   batch_size,
+        num_classes =   len(CLASSES),
         anchors     =   ANCHORS,
         masks       =   MASKS
     )
-
-    # Show summary.
     model.summary()
 
     # Load and apply weights.
     load_darknet_weights(model, weights_file, tiny)
 
     # Check sanity.
-    model(np.random.random((1, width, height, channels)).astype(np.float32))
+    model(np.random.random([batch_size, height, width, channels]).astype(np.float32))
 
     # Save model.
-    if not checkpoint:
-        if False:
-            model.save(out_file)
-        else:
-            model_  =   tf.function(lambda x: model(x))
-            model_  =   model_.get_concrete_function(tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype))
-            model_  =   convert_variables_to_constants_v2(model_)
-            model_.graph.as_graph_def()
+    model_  =   tf.function(lambda x: model(x))
+    model_  =   model_.get_concrete_function(tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype))
+    model_  =   convert_variables_to_constants_v2(model_)
+    model_.graph.as_graph_def()
 
-            tf.io.write_graph(
-                graph_or_graph_def  =   model_.graph,
-                logdir              =   os.path.dirname(out_file),
-                name                =   os.path.basename(out_file),
-                as_text             =   False
-            )
-    else:
-        model.save_weights(out_file)
+    tf.io.write_graph(
+        graph_or_graph_def  =   model_.graph,
+        logdir              =   os.path.dirname(out_file),
+        name                =   os.path.basename(out_file),
+        as_text             =   False
+    )
+
+    # Test.
+    if test_list_file:
+        # Get files.
+        with open(test_list_file, 'r', encoding = 'utf-8') as file:
+            lines   =   file.readlines()
+        files       =   []
+        for elmLine in lines:
+            elmLine =   elmLine.strip()
+            if not elmLine:
+                continue
+
+            files.append(os.path.abspath(elmLine))
+        NUM_DATA    =   len(files)
+
+        # Make output directory.
+        PATH_OUT    =   './visualized'
+        os.makedirs(PATH_OUT, exist_ok = True)
+
+        #
+        for idx in range(0, NUM_DATA, batch_size):
+            # Preprocess data.
+            batch   =   []
+            batch_  =   []
+            for idxBat in range(batch_size):
+                idxFile =   idx + idxBat
+                if idxFile < NUM_DATA:
+                    img     =   tf.image.decode_image(open(files[idxFile], 'rb').read(), channels=3)
+                    img_    =   tf.image.resize(img, (width, height))
+                    img_    =   img_ / 255
+                    # img     =   cv2.imread(files[idxFile])
+                    # img_    =   cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    # img_    =   cv2.resize(img_, (width, height))
+                    # img_    =   img_.astype(np.float32) / 255.
+
+                    batch.append(img)
+                else:
+                    img_    =   np.random.random([height, width, channels]).astype(np.float32)
+
+                batch_.append(img_)
+
+            batch_  =   np.reshape(batch_, [batch_size, height, width, channels])
+
+            # Inference.
+            prs     =   model.predict(batch_)
+
+            # Visualize.
+            for idxBat in range(batch_size):
+                idxFile =   idx + idxBat
+                if idxFile < NUM_DATA:
+                    PR_BBOXES       =   prs[idxBat][0]
+                    PR_CONFIDENCES  =   prs[idxBat][1]
+                    PR_CLASSES      =   prs[idxBat][2]
+                    NUM_DETECTIONS  =   prs[idxBat][3]
+
+                    file            =   files[idxFile]
+                    fName, fExt     =   os.path.splitext(os.path.basename(file))
+                    img             =   batch[idxBat]
+                    img             =   cv2.cvtColor(img.numpy(), cv2.COLOR_RGB2BGR)
+                    img             =   visualize(img, prs[idxBat])
+
+                    cv2.imwrite(os.path.join(PATH_OUT, f'{fName}_v{fExt}'), img)
+
+                    print(f'FILE: {file}')
+                    for idxDet in range(NUM_DETECTIONS):
+                        print('    ', end = '')
+                        print(CLASSES[PR_CLASSES[idxDet]].ljust(LEN_STR_CLASS, ' '), end = '')
+                        print(f' ({(PR_CONFIDENCES[idxDet] * 100):.2f}%)', end = '')
+                        print()
+                else:
+                    break
+
+    del model_
+    del model
 
     return
 
@@ -97,20 +193,20 @@ if __name__ == '__main__':
         type        =   str,
     )
     argparser.add_argument(
-        '--out_file',
+        '--classes_file',
         required    =   True,
-        type        =   str
+        type        =   str,
     )
 
     # Other options.
     argparser.add_argument(
-        '--width',
+        '--height',
         required    =   False,
         type        =   int,
         default     =   416
     )
     argparser.add_argument(
-        '--height',
+        '--width',
         required    =   False,
         type        =   int,
         default     =   416
@@ -122,10 +218,10 @@ if __name__ == '__main__':
         default     =   3
     )
     argparser.add_argument(
-        '--num_classes',
+        '--batch_size',
         required    =   False,
         type        =   int,
-        default     =   80
+        default     =   1
     )
     argparser.add_argument(
         '--tiny',
@@ -133,20 +229,27 @@ if __name__ == '__main__':
         action      =   'store_true'
     )
     argparser.add_argument(
-        '--checkpoint',
+        '--out_file',
         required    =   False,
-        action      =   'store_true'
+        type        =   str,
+        default     =   './model.pb'
+    )
+    argparser.add_argument(
+        '--test_list_file',
+        required    =   True,
+        type        =   str,
     )
 
     args = argparser.parse_args()
 
     main(
         weights_file    =   args.weights_file,
-        out_file        =   args.out_file,
+        classes_file    =   args.classes_file,
         width           =   args.width,
         height          =   args.height,
         channels        =   args.channels,
-        num_classes     =   args.num_classes,
+        batch_size      =   args.batch_size,
         tiny            =   args.tiny,
-        checkpoint      =   args.checkpoint
+        out_file        =   args.out_file,
+        test_list_file  =   args.test_list_file
     )
