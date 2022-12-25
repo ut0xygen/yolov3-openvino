@@ -251,16 +251,17 @@ def _YOLOv3NMS(outputs,
             score_threshold =   thr_confidence,
             soft_nms_sigma  =   0.5
         )
-        NUM_BBOXES      =   tf.squeeze(tf.slice(tf.shape(nms[0]), [0], [1]), 0, name = f'RESULT_{idx}_3_NUM_DETECTIONS')
-        TENSOR_PAD_I    =   tf.zeros(max_bboxes - NUM_BBOXES, tf.int32)
-        TENSOR_PAD_F    =   tf.zeros(max_bboxes - NUM_BBOXES, tf.float32)
+        numDets         =   tf.gather(tf.shape(nms[0]), [0])
+        numDets         =   tf.squeeze(numDets, name = f'RESULT_{idx}_3_NUM_DETECTIONS')
+        TENSOR_PAD_I    =   tf.zeros(max_bboxes - numDets, tf.int32)
+        TENSOR_PAD_F    =   tf.zeros(max_bboxes - numDets, tf.float32)
         SELECTION       =   tf.concat([nms[0], TENSOR_PAD_I], 0)
 
         bboxes  =   tf.gather(bboxes, SELECTION, name = f'RESULT_{idx}_0_BBOXES')
         confs   =   tf.concat([nms[1], TENSOR_PAD_F], 0, name = f'RESULT_{idx}_1_CONFIDENCES')
         classes =   tf.gather(classes, SELECTION, name = f'RESULT_{idx}_2_CLASSES')
 
-        res.append([bboxes, confs, classes, NUM_BBOXES])
+        res.append([bboxes, confs, classes, numDets])
 
     return res
 

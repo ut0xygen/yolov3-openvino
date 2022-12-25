@@ -1,4 +1,4 @@
-FROM ubuntu:20.04_openvino
+FROM openvino:2022.3.0_tf2_ubuntu22.04
 USER root
 
 # Add user.
